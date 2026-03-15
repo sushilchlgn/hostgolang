@@ -2,18 +2,19 @@ package builder
 
 import (
 	"os/exec"
+	"path/filepath"
 )
 
 type GoBuilder struct{}
 
-func (b GoBuilder) Build(path string) error {
-	cmd := exec.Command("go", "build", "-o", "app")
-	cmd.Dir = path
+func (b GoBuilder) Build(projectPath string) error {
+	cmd := exec.Command("go", "build", "-o", filepath.Join(projectPath, "app"))
+	cmd.Dir = projectPath
 	return cmd.Run()
 }
 
-func (b GoBuilder) Run(path string) error {
-	cmd := exec.Command("./app")
-	cmd.Dir = path
+func (b GoBuilder) Run(projectPath string) error {
+	cmd := exec.Command(filepath.Join(projectPath, "app"))
+	cmd.Dir = projectPath
 	return cmd.Start()
 }
