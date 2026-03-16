@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"runtime"
 	"path/filepath"
 )
 
@@ -15,41 +16,57 @@ type GoBuilder struct{}
 
 // Build builds the Go project at the given path
 func (b *GoBuilder) Build(projectPath string) error {
-	cmd := exec.Command("go", "mod", "tidy")
-	cmd.Dir = projectPath
-	cmdOut, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("mod tidy failed: %s\n%s", err, string(cmdOut))
-	}
+    // Run go mod tidy
+    cmd := exec.Command("go", "mod", "tidy")
+    cmd.Dir = projectPath
+    if out, err := cmd.CombinedOutput(); err != nil {
+        return fmt.Errorf("mod tidy failed: %s\n%s", err, string(out))
+    }
 
-	cmd = exec.Command("go", "build", "-o", "app")
-	cmd.Dir = projectPath
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("go build failed: %s\n%s", err, string(out))
-	}
+    // Determine output name for Windows vs others
+    output := "app"
+    if runtime.GOOS == "windows" {
+        output += ".exe"
+    }
 
-	log.Println("Build successful:", projectPath)
-	return nil
+    cmd = exec.Command("go", "build", "-o", output)
+    cmd.Dir = projectPath
+    if out, err := cmd.CombinedOutput(); err != nil {
+        return fmt.Errorf("go build failed: %s\n%s", err, string(out))
+    }
+
+    log.Println("Build successful:", projectPath, "binary:", output)
+    return nil
 }
 
 // Run executes the built Go binary
 func (b *GoBuilder) Run(projectPath string) error {
-	binary := filepath.Join(projectPath, "app")
-	cmd := exec.Command(binary)
-	cmd.Dir = projectPath
+    binary := filepath.Join(projectPath, "app")
 
-	// Optional: log output of the running app
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+    // Append .exe on Windows
+    if runtime.GOOS == "windows" {
+        binary += ".exe"
+    }
 
-	err := cmd.Start()
-	if err != nil {
-		return fmt.Errorf("failed to start app: %s", err)
-	}
+    if _, err := os.Stat(binary); os.IsNotExist(err) {
+        return fmt.Errorf("binary not found: %s", binary)
+    }
 
-	log.Println("App started:", binary)
-	return nil
+    absBinary, err := filepath.Abs(binary)
+    if err != nil {
+        return fmt.Errorf("failed to get absolute path of binary: %s", err)
+    }
+
+    cmd := exec.Command(absBinary)
+    cmd.Stdout = os.Stdout
+    cmd.Stderr = os.Stderr
+
+    err = cmd.Start()
+    if err != nil {
+        return fmt.Errorf("failed to start app: %s", err)
+    }
+
+    return nil
 }
 
 // Unzip extracts a zip archive to the specified destination
@@ -95,8 +112,17 @@ func Unzip(src string, dest string) error {
 	return nil
 }
 
-// FindGoProjectRoot attempts to locate the folder containing main.go or go.mod
+// FindGoProjectRoot recursively finds the folder containing main.go or go.mod
 func FindGoProjectRoot(base string) string {
+	// Check if base itself has main.go or go.mod
+	if _, err := os.Stat(filepath.Join(base, "main.go")); err == nil {
+		return base
+	}
+	if _, err := os.Stat(filepath.Join(base, "go.mod")); err == nil {
+		return base
+	}
+
+	// Check first-level subfolders
 	files, err := os.ReadDir(base)
 	if err != nil {
 		return base
@@ -105,13 +131,15 @@ func FindGoProjectRoot(base string) string {
 	for _, f := range files {
 		if f.IsDir() {
 			sub := filepath.Join(base, f.Name())
-			if _, err := os.Stat(filepath.Join(sub, "go.mod")); err == nil {
+			if _, err := os.Stat(filepath.Join(sub, "main.go")); err == nil {
 				return sub
 			}
-			if _, err := os.Stat(filepath.Join(sub, "main.go")); err == nil {
+			if _, err := os.Stat(filepath.Join(sub, "go.mod")); err == nil {
 				return sub
 			}
 		}
 	}
+
+	// Default to base
 	return base
 }
