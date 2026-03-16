@@ -9,11 +9,11 @@ import (
 
 	"github.com/sushilchlgn/hostgolang/internal/builder"
 )
+
 // UploadHandler handles ZIP uploads
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		w.Write([]byte("Only POST allowed"))
+		http.Error(w, "Only POST allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -24,11 +24,19 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Prepare upload folder
+	// Prepare uploads folder
 	os.MkdirAll("uploads", os.ModePerm)
 
-	// Save the uploaded zip
-	zipPath := filepath.Join("uploads", header.Filename)
+	// Prepare project name & folder
+	projectName := header.Filename
+	if len(projectName) > 4 && projectName[len(projectName)-4:] == ".zip" {
+		projectName = projectName[:len(projectName)-4] // remove .zip
+	}
+	projectDir := filepath.Join("uploads", projectName)
+	os.MkdirAll(projectDir, os.ModePerm)
+
+	// Save uploaded zip into project folder
+	zipPath := filepath.Join(projectDir, header.Filename)
 	dst, err := os.Create(zipPath)
 	if err != nil {
 		http.Error(w, "Failed to save file: "+err.Error(), 500)
@@ -41,14 +49,7 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract zip to a dedicated folder
-	projectName := header.Filename
-	if len(projectName) > 4 && projectName[len(projectName)-4:] == ".zip" {
-		projectName = projectName[:len(projectName)-4] // remove .zip
-	}
-	projectDir := filepath.Join("uploads", projectName)
-	os.MkdirAll(projectDir, os.ModePerm)
-
+	// Unzip into project folder
 	err = builder.Unzip(zipPath, projectDir)
 	if err != nil {
 		http.Error(w, "Unzip failed: "+err.Error(), 500)
