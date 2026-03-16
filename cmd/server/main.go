@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -10,7 +9,7 @@ import (
 
 	"github.com/sushilchlgn/hostgolang/internal/builder"
 )
-
+// UploadHandler handles ZIP uploads
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -18,49 +17,65 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse file from form
 	file, header, err := r.FormFile("project")
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("Failed to read file"))
+		http.Error(w, "Failed to read file: "+err.Error(), 400)
 		return
 	}
 	defer file.Close()
 
-	// Save file to uploads folder
+	// Prepare upload folder
 	os.MkdirAll("uploads", os.ModePerm)
-	projectPath := filepath.Join("uploads", header.Filename)
-	dst, err := os.Create(projectPath)
+
+	// Save the uploaded zip
+	zipPath := filepath.Join("uploads", header.Filename)
+	dst, err := os.Create(zipPath)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("Failed to save file"))
+		http.Error(w, "Failed to save file: "+err.Error(), 500)
 		return
 	}
 	defer dst.Close()
-
-	io.Copy(dst, file)
-
-	// --------------------------
-	// Build and Run the project
-	// --------------------------
-	goBuilder := builder.GoBuilder{} // use package name 'builder'
-	err = goBuilder.Build("uploads/" + header.Filename)
+	_, err = dst.ReadFrom(file)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("Build failed: " + err.Error()))
+		http.Error(w, "Failed to save file: "+err.Error(), 500)
 		return
 	}
 
-	err = goBuilder.Run("uploads/" + header.Filename)
+	// Extract zip to a dedicated folder
+	projectName := header.Filename
+	if len(projectName) > 4 && projectName[len(projectName)-4:] == ".zip" {
+		projectName = projectName[:len(projectName)-4] // remove .zip
+	}
+	projectDir := filepath.Join("uploads", projectName)
+	os.MkdirAll(projectDir, os.ModePerm)
+
+	err = builder.Unzip(zipPath, projectDir)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("Run failed: " + err.Error()))
+		http.Error(w, "Unzip failed: "+err.Error(), 500)
 		return
 	}
 
-	// Respond success
-	fmt.Fprintf(w, "Uploaded, built, and running successfully: %s", header.Filename)
+	// Detect Go project root inside extracted folder
+	projectRoot := builder.FindGoProjectRoot(projectDir)
+
+	// Build the Go project
+	goBuilder := builder.GoBuilder{}
+	err = goBuilder.Build(projectRoot)
+	if err != nil {
+		http.Error(w, "Build failed: "+err.Error(), 500)
+		return
+	}
+
+	// Run the Go binary
+	err = goBuilder.Run(projectRoot)
+	if err != nil {
+		http.Error(w, "Run failed: "+err.Error(), 500)
+		return
+	}
+
+	fmt.Fprintf(w, "Project deployed successfully")
 }
+
 func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Host Go Land Server Running"))
@@ -69,5 +84,5 @@ func main() {
 	http.HandleFunc("/upload", uploadHandler)
 
 	log.Println("Server running on port 8080")
-	http.ListenAndServe(":8080", nil)
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
