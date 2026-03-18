@@ -11,19 +11,15 @@ import (
 	"time"
 )
 
-// GoBuilder implements Builder for Go projects
 type GoBuilder struct{}
 
-// Build builds the Go project at the given path
 func (b *GoBuilder) Build(projectPath string) error {
-	// Run go mod tidy
 	cmd := exec.Command("go", "mod", "tidy")
 	cmd.Dir = projectPath
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("mod tidy failed: %s\n%s", err, string(out))
 	}
 
-	// Build the project binary
 	output := "app"
 	if runtime.GOOS == "windows" {
 		output += ".exe"
@@ -33,47 +29,36 @@ func (b *GoBuilder) Build(projectPath string) error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("go build failed: %s\n%s", err, string(out))
 	}
-
 	return nil
 }
 
-// Run executes the built Go binary safely with timeout
-func (b *GoBuilder) Run(projectPath string) (string, error) {
+// ✅ New function to run with timeout and capture output
+func (b *GoBuilder) RunWithTimeout(projectPath string, timeout time.Duration) (string, error) {
 	binary := filepath.Join(projectPath, "app")
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-
 	if _, err := os.Stat(binary); os.IsNotExist(err) {
 		return "", fmt.Errorf("binary not found: %s", binary)
 	}
 
-	absBinary, err := filepath.Abs(binary)
-	if err != nil {
-		return "", fmt.Errorf("failed to get absolute path: %s", err)
-	}
-
-	// 🔹 Timeout for safety
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, absBinary)
-
+	cmd := exec.CommandContext(ctx, binary)
 	var out bytes.Buffer
-	var stderr bytes.Buffer
 	cmd.Stdout = &out
-	cmd.Stderr = &stderr
+	cmd.Stderr = &out
 
-	err = cmd.Run()
-	output := out.String() + stderr.String()
-
-	if ctx.Err() == context.DeadlineExceeded {
-		return output, fmt.Errorf("execution timed out")
-	}
-
+	err := cmd.Start()
 	if err != nil {
-		return output, fmt.Errorf("execution failed: %v", err)
+		return out.String(), fmt.Errorf("failed to start app: %s", err)
 	}
 
-	return output, nil
+	err = cmd.Wait()
+	if ctx.Err() == context.DeadlineExceeded {
+		return out.String(), fmt.Errorf("execution timed out")
+	}
+
+	return out.String(), err
 }
