@@ -5,6 +5,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"time"
+	"strings"
 
 	"github.com/sushilchlgn/hostgolang/internal/builder"
 )
@@ -22,17 +25,26 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Prepare uploads folder
-	os.MkdirAll("uploads", os.ModePerm)
-
-	projectName := header.Filename
-	if len(projectName) > 4 && projectName[len(projectName)-4:] == ".zip" {
-		projectName = projectName[:len(projectName)-4]
+	// ✅ Validate file size
+	const maxFileSize = 10 * 1024 * 1024 // 10 MB
+	if header.Size > maxFileSize {
+		http.Error(w, "File too large", http.StatusBadRequest)
+		return
 	}
 
+	// ✅ Validate file extension
+	if len(header.Filename) < 4 || strings.ToLower(header.Filename[len(header.Filename)-4:]) != ".zip" {
+		http.Error(w, "Only ZIP files allowed", http.StatusBadRequest)
+		return
+	}
+
+	// Prepare upload directory
+	os.MkdirAll("uploads", os.ModePerm)
+	projectName := header.Filename[:len(header.Filename)-4]
 	projectDir := filepath.Join("uploads", projectName)
 	os.MkdirAll(projectDir, os.ModePerm)
 
+	// Save ZIP
 	zipPath := filepath.Join(projectDir, header.Filename)
 	dst, err := os.Create(zipPath)
 	if err != nil {
@@ -40,13 +52,14 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer dst.Close()
-
 	if _, err := dst.ReadFrom(file); err != nil {
 		http.Error(w, "Failed to save file: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Unzip the project
+	log.Printf("[UPLOAD] Project: %s - Uploaded by: %s", projectName, r.RemoteAddr)
+
+	// Unzip
 	if err := builder.Unzip(zipPath, projectDir); err != nil {
 		http.Error(w, "Unzip failed: "+err.Error(), http.StatusInternalServerError)
 		log.Printf("[UNZIP] Project: %s - Failed: %v", projectName, err)
@@ -54,12 +67,10 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[UNZIP] Project: %s - Unzip successful", projectName)
 
-	// Detect Go project root
 	projectRoot := builder.FindGoProjectRoot(projectDir)
-
 	var bldr builder.Builder = &builder.GoBuilder{}
 
-	// 🔹 Build
+	// Build
 	log.Printf("[BUILD] Project: %s - Starting build", projectName)
 	if err := bldr.Build(projectRoot); err != nil {
 		http.Error(w, "Build failed:\n"+err.Error(), http.StatusInternalServerError)
@@ -68,16 +79,20 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("[BUILD] Project: %s - Build successful", projectName)
 
-	// 🔹 Run
-	log.Printf("[RUN] Project: %s - Starting execution", projectName)
-	output, err := bldr.Run(projectRoot)
+	// 🔹 Configurable timeout (default 5s)
+	timeout := 5 * time.Second
+	if tStr := r.URL.Query().Get("timeout"); tStr != "" {
+		if tSec, err := strconv.Atoi(tStr); err == nil && tSec > 0 {
+			timeout = time.Duration(tSec) * time.Second
+		}
+	}
+	log.Printf("[RUN] Project: %s - Starting execution (timeout=%v)", projectName, timeout)
+
+	// Run
+	output, err := bldr.RunWithTimeout(projectRoot, timeout)
 	if err != nil {
 		http.Error(w, "Run failed:\n"+err.Error()+"\n\nOutput:\n"+output, http.StatusInternalServerError)
-		if output == "" {
-			log.Printf("[RUN] Project: %s - Failed: %v", projectName, err)
-		} else {
-			log.Printf("[RUN] Project: %s - Failed: %v\nOutput:\n%s", projectName, err, output)
-		}
+		log.Printf("[RUN] Project: %s - Failed: %v\nOutput:\n%s", projectName, err, output)
 		return
 	}
 
@@ -86,7 +101,6 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	// Add timestamp and microseconds for precise logging
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
