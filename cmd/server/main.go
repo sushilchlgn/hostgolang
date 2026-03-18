@@ -22,6 +22,7 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
+	// Prepare uploads folder
 	os.MkdirAll("uploads", os.ModePerm)
 
 	projectName := header.Filename
@@ -33,7 +34,6 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	os.MkdirAll(projectDir, os.ModePerm)
 
 	zipPath := filepath.Join(projectDir, header.Filename)
-
 	dst, err := os.Create(zipPath)
 	if err != nil {
 		http.Error(w, "Failed to save file: "+err.Error(), http.StatusInternalServerError)
@@ -46,30 +46,49 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Unzip the project
 	if err := builder.Unzip(zipPath, projectDir); err != nil {
 		http.Error(w, "Unzip failed: "+err.Error(), http.StatusInternalServerError)
+		log.Printf("[UNZIP] Project: %s - Failed: %v", projectName, err)
 		return
 	}
+	log.Printf("[UNZIP] Project: %s - Unzip successful", projectName)
 
+	// Detect Go project root
 	projectRoot := builder.FindGoProjectRoot(projectDir)
 
 	var bldr builder.Builder = &builder.GoBuilder{}
 
+	// 🔹 Build
+	log.Printf("[BUILD] Project: %s - Starting build", projectName)
 	if err := bldr.Build(projectRoot); err != nil {
 		http.Error(w, "Build failed:\n"+err.Error(), http.StatusInternalServerError)
+		log.Printf("[BUILD] Project: %s - Failed: %v", projectName, err)
 		return
 	}
+	log.Printf("[BUILD] Project: %s - Build successful", projectName)
 
+	// 🔹 Run
+	log.Printf("[RUN] Project: %s - Starting execution", projectName)
 	output, err := bldr.Run(projectRoot)
 	if err != nil {
 		http.Error(w, "Run failed:\n"+err.Error()+"\n\nOutput:\n"+output, http.StatusInternalServerError)
+		if output == "" {
+			log.Printf("[RUN] Project: %s - Failed: %v", projectName, err)
+		} else {
+			log.Printf("[RUN] Project: %s - Failed: %v\nOutput:\n%s", projectName, err, output)
+		}
 		return
 	}
 
+	log.Printf("[RUN] Project: %s - Execution finished successfully\nOutput:\n%s", projectName, output)
 	w.Write([]byte("Execution Output:\n" + output))
 }
 
 func main() {
+	// Add timestamp and microseconds for precise logging
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Host Go Land Server Running"))
 	})
