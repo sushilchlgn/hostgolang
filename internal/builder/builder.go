@@ -4,13 +4,14 @@ import (
 	"archive/zip"
 	"io"
 	"os"
+	"time"
 	"path/filepath"
 )
 
 // Builder interface defines standard methods for building and running projects
 type Builder interface {
 	Build(projectPath string) error
-	Run(projectPath string) (string, error)
+	RunWithTimeout(projectPath string, timeout time.Duration) (string, error)
 }
 
 // Unzip extracts a zip archive to the specified destination
