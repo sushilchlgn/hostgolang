@@ -66,7 +66,6 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ✅ Single response only
 	w.Write([]byte("Execution Output:\n" + output))
 }
 
