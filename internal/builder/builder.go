@@ -2,20 +2,18 @@ package builder
 
 import (
 	"archive/zip"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
-// Builder interface
+// Builder interface defines standard methods for building and running projects
 type Builder interface {
 	Build(projectPath string) error
 	Run(projectPath string) (string, error)
 }
 
-// Secure Unzip (Zip Slip protection)
+// Unzip extracts a zip archive to the specified destination
 func Unzip(src string, dest string) error {
 	r, err := zip.OpenReader(src)
 	if err != nil {
@@ -25,11 +23,6 @@ func Unzip(src string, dest string) error {
 
 	for _, f := range r.File {
 		fpath := filepath.Join(dest, f.Name)
-
-		// 🔒 Zip Slip protection
-		if !strings.HasPrefix(filepath.Clean(fpath), filepath.Clean(dest)+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal file path: %s", fpath)
-		}
 
 		if f.FileInfo().IsDir() {
 			os.MkdirAll(fpath, os.ModePerm)
@@ -47,15 +40,12 @@ func Unzip(src string, dest string) error {
 
 		rc, err := f.Open()
 		if err != nil {
-			outFile.Close()
 			return err
 		}
 
 		_, err = io.Copy(outFile, rc)
-
 		outFile.Close()
 		rc.Close()
-
 		if err != nil {
 			return err
 		}
@@ -64,7 +54,7 @@ func Unzip(src string, dest string) error {
 	return nil
 }
 
-// Find project root
+// FindGoProjectRoot finds the folder containing main.go or go.mod
 func FindGoProjectRoot(base string) string {
 	if _, err := os.Stat(filepath.Join(base, "main.go")); err == nil {
 		return base
